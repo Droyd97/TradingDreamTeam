@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# QuantConncet Project File
+.qcproject
+
 # Distribution / packaging
 .Python
 build/
