@@ -52,25 +52,28 @@ class CoIntegratedPairsTrading(QCAlgorithm):
         self.SetStartDate(2018, 6, 30)  # Set Start Date
         self.SetEndDate(2019, 1, 27) # Set End Date
         self.SetCash(100000)  # Set Strategy Cash
-        self.SetBenchmark("SPY") # Set Benchmark
-        resolution = Resolution.Minute # Set Resolution
+        self.SetBenchmark("SPY") # Set Benchmark
+        resolution = Resolution.Minute # Set Resolution
         # self.UniverseSettings.Resolution = Resolution.Hour # Set resolution
 
         self.symbols = {}
 
+        price_all = pd.DataFrame(columns=tickers_all)
+
         for i in range(len(self.tickers_all)):
             self.symbols[self.tickers_all[i]] = self.AddEquity(self.tickers_all[i], resolution).Symbol
+            price_all[price_all.columns[i]] = self.History([tickers_all[i]],start ,end, Resolution.Daily).loc[tickers_all[i]]['close']
+        price_all.index = price_all.index.date
+
             
 
-
-        # self.Schedule.On(self.DateRules.EveryDay("VTX"), self.TimeRules.AfterMarketOpen("VTX", 10), Action(self.))
+# self.Schedule.On(self.DateRules.EveryDay("VTX"), self.TimeRules.AfterMarketOpen("VTX", 10), Action(self.))
 
     def signals(self):
-        
+        pass
     
-    def pairsTrading(self):
 
-    def olsRegression(self):
+    def olsRegression(self, tickers):
         for i in tickers:
             x = np.log(data[data.columns[tickers.index(i)]])
             x_const = sm.add_constant(x)
@@ -266,8 +269,99 @@ class CoIntegratedPairsTrading(QCAlgorithm):
                 #dt_ind = j.date()
                 element1=round(returns_data.loc[j,firstticker],3)
                 element2=round(returns_data.loc[j,secondticker],3)
-                sellspreadreturns.iloc[dateindex,i]=[element1, element2] 
+                sellspreadreturns.iloc[dateindex,i]=[element1, element2]
 
+        pair_ret_sell_temp=sellspread.copy()
+        for i in range(len(pair_ret_sell_temp.columns)):
+            for j in range(len(pair_ret_sell_temp.index)):
+                pair_ret_sell_temp.iloc[j,i]=np.array(sellspread.iloc[j][i])*np.array(sellspreadreturns.iloc[j][i])
+
+        # Estimate returns for each pair trading on a given day
+        pair_ret_sell=pair_ret_sell_temp.copy()
+        for i in range(len(pair_ret_sell_temp.columns)):
+            for j in range(len(pair_ret_sell_temp.index)):
+                pair_ret_sell.iloc[j,i]=sum(pair_ret_sell_temp.iloc[j][i])
+
+        #Select the pair with the highest cumulative return for each ticker
+        pair_ret_sell_cum=pair_ret_sell.cumsum()
+        cumval_sell=pair_ret_sell_cum.iloc[[-1]] #cumulative returns for all filtered pairs
+
+        sellindex=[]
+        for i in range(len(pair_ret_sell.columns)):
+            sellindex.append(pair_ret_sell.columns[i][0])
+        sellindex_unique=list(set(sellindex))
+
+        selectedpairs_sellspread=[]
+        for i in range(len(sellindex_unique)):
+            df2 = cumval_sell.filter(regex=sellindex_unique[i])
+            maxval= df2.max().max()
+            selected_pair= getIndexes(df2, maxval)[0][1]
+            selectedpairs_sellspread.append(selected_pair)
+        selectedpairs_sellspread=list(set(selectedpairs_sellspread))
+
+        for i in range(len(commonelements)):
+            el= commonelements[i]
+            if np.array(cumval_sell[el]>cumval_buy[el])==True:
+                selectedpairs_buyspread.remove(el)
+            else: 
+                selectedpairs_sellspread.remove(el)
+
+        return selectedpairs_buyspread, selectedpairs_sellspread
+
+
+    # totalselectedpairs=selectedpairs_buyspread+selectedpairs_sellspread
+    # # totalselectedpairs
+    # #Assuming an equal portfolio allocation for each pair we can assing the following weights:
+    # weight_buyspread=len(selectedpairs_buyspread)/len(totalselectedpairs)
+    # weight_sellspread=len(selectedpairs_sellspread)/len(totalselectedpairs)
+    # weight_buyspread+weight_sellspread
+        
+    def momentum_indicator(self, price_all):
+        ema_short = price_all.ewm(span=20, adjust=False).mean()
+        ema_long = price_all.ewm(span=50, adjust=False).mean()
+
+        trading_positions_raw = price_all - ema_short
+        #Momentum indicator summary genereated from price vs. short EMA comparison
+        momindicator=trading_positions_raw.apply(np.sign)
+        return momindicator
+
+    def pairsTrading(self):
+        #Find average momentum indicator for each symbol and check its consistency
+        #with the signal obtained from buy-spread pairs trading strategy 
+        final_list_pairs_buyspread=[]
+        for i in range(len(selectedpairs_buyspread)):
+            pair=selectedpairs_buyspread[i]
+            symbol_1=selectedpairs_buyspread[i][0]
+            symbol_2= selectedpairs_buyspread[i][1]
+    #     Estimate average sentiment for each symbol in our pair
+            avgmomfreq1=momindicator[symbol_1].mean()
+            avgmomfreq2=momindicator[symbol_2].mean()
+            if (avgmomfreq1<0 and avgmomfreq2>0):
+                final_list_pairs_buyspread.append(pair)
+
+        #Find average momentum indicator for each symbol and check its consistency
+        #with the signal obtained from sell-spread pairs trading strategy 
+        final_list_pairs_sellspread=[]
+        for i in range(len(selectedpairs_sellspread)):
+            pair=selectedpairs_sellspread[i]
+            symbol_1=selectedpairs_sellspread[i][0]
+            symbol_2= selectedpairs_sellspread[i][1]
+        #     Estimate average sentiment for each symbol in our pair
+            avgmomfreq1=momindicator[symbol_1].mean()
+            avgmomfreq2=momindicator[symbol_2].mean()
+            if (avgmomfreq1>0 and avgmomfreq2<0):
+                final_list_pairs_sellspread.append(pair)
+            
+        final_list_pairstrading=final_list_pairs_buyspread+final_list_pairs_sellspread
+
+        #Trading positions for our final list of insights
+        buyspread[final_list_pairs_buyspread]
+        sellspread[final_list_pairs_sellspread]
+        pd.concat([buyspread[final_list_pairs_buyspread], sellspread[final_list_pairs_sellspread]],axis=1)
+
+
+    def rebalance(self):
+        pairstrading(self)
 
     def common_elements(list1, list2):
         return [element for element in list1 if element in list2]
